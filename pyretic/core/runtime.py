@@ -34,7 +34,9 @@ from pyretic.core.network import *
 from multiprocessing import Process, Manager, RLock, Lock, Value, Queue, Condition
 import logging, sys, time
 from datetime import datetime
-
+from pyretic.lib.query import *
+from pyretic.lib.std import *
+from pyretic.lib.corelib import *
 TABLE_MISS_PRIORITY = 0
 
 class Runtime(object):
@@ -59,6 +61,13 @@ class Runtime(object):
         self.network = ConcreteNetwork(self)
         self.prev_network = self.network.copy()
         self.policy = main(**kwargs)
+        print 'setting preset value of apps'
+        self.lst_len=4
+        self.lst_lst=['10.0.0.1','10.0.0.2','10.0.1.1','10.0.1.2']
+        self.lst_egress_pair=set([('10.0.0.2', 1, 2), ('10.0.1.4', 22, 2), ('10.0.0.4', 2, 2), ('10.0.1.2', 21, 2), ('10.0.1.1', 21, 1), ('10.0.1.3', 22, 1), ('10.0.0.3', 2, 1), ('10.0.0.1', 1, 1)])
+        self.policy.lst_len=self.lst_len
+        self.policy.lst_lst=self.lst_lst
+        self.policy.lst_egress_pair=self.lst_egress_pair
         self.mode = mode
         self.backend = backend
         self.backend.runtime = self
@@ -100,13 +109,22 @@ class Runtime(object):
         """
         with self.policy_lock:
             pyretic_pkt = self.concrete2pyretic(concrete_pkt)
-            self.policy=self.update_app_policy()
+            #print 'test self policy em'
+            #print self.policy.lst_lst
+            self.lst_lst=self.policy.lst_lst
+            self.lst_len=self.policy.lst_len
+            if len(self.policy.lst_egress_pair) >0:
+                 self.lst_egress_pair=self.policy.lst_egress_pair
+            #self.policy=self.update_app_policy()
             # find the queries, if any in the policy, that will be evaluated
             queries,pkts = queries_in_eval((set(),{pyretic_pkt}),self.policy)
 
             print "runtime call apply"
             for q in queries:
                 q.apply()
+            self.lst_lst=self.policy.lst_lst
+            self.lst_len=self.policy.lst_len
+            #self.lst_egress_pair=self.policy.lst_egress_pair
             self.policy=self.update_app_policy()
             # evaluate the policy
             output = self.policy.eval(pyretic_pkt)
@@ -128,14 +146,63 @@ class Runtime(object):
 #############
 #app policy
 #############
+    def travel(self,fa,v,src,mst):
+        print 'travel now fa is {0} node v is {1}, src is {2}'.format(fa,v,src)
+        po_lst=[]
+        ret=false
+        children=[]
+        it=0
+        for port in mst.node[v]['ports'].values():
+            if port.possibly_up() and port.linked_to is not None and port.linked_to.switch is not fa:
+                children.append((it,port.linked_to.switch))
+                print port.linked_to.switch
+            it=it+1
+        """
+        for edge in mst.edges():
+            if edge[0] == v:
+                children.append(edge[1])
+            if edge[1] == v:
+                children.append(edge[0])
+        """
+        for chd in children:
+            chd_po_lst=self.travel(v,chd[1],src,mst)
+            if(chd_po_lst is not []):
+                po_lst.append((src,v,chd[0]))
+                po_lst=po_lst+chd_po_lst
+            for lst_ele in self.lst_egress_pair:
+                if lst_ele[1] == v and lst_ele[0] in self.lst_lst:
+                    po_lst.append((src,v,lst_ele[2]))
+        return po_lst
+    def policy_gen(self,a_lst):
+        #assert len(a_lst)>=1
+        final_policy=self.policy
+        #final_policy.lst_len=self.lst_len
+        #final_policy.lst_lst=self.lst_lst
+        #final_policy.lst_egress_pair=self.lst_egress_pair
+        for ele in a_lst:
+            fwd_policy=match(srcip=IPAddr(ele[0]),switch=ele[1])>>fwd(ele[2])
+            final_policy=final_policy+fwd_policy
+        final_policy.lst_len=self.lst_len
+        final_policy.lst_lst=self.lst_lst
+        final_policy.lst_egress_pair=self.lst_egress_pair
+        return final_policy
     def update_app_policy(self):
         print "update app policy now"
-        print self.policy.lst_len
-        print self.policy.lst_lst
+        print self.lst_len
+        print self.lst_lst
+        print self.lst_egress_pair
         print self.network.topology.__str__()
-        for i in self.policy.lst_egress_pair:
-            print str(i)
-        return self.policy
+        mst=Topology.minimum_spanning_tree(self.network.topology)
+        print mst.nodes()
+        print mst.edges()
+        po_lst=[]
+        for lst_ele in self.lst_egress_pair:
+            if lst_ele[0] in self.lst_lst:
+                po_lst=po_lst+self.travel(-1,lst_ele[1],lst_ele[0],mst)
+        print 'po_list is '
+        for i in po_lst:
+            print i
+        return self.policy_gen(po_lst)
 
 #############
 # DYNAMICS  

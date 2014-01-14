@@ -9,19 +9,23 @@ class dynamic_app(DynamicPolicy):
         super(dynamic_app,self).__init__()
         #self.foward=(match(ethtype=2054))>>flood()
         #self.foward=flood()
-        self.lst_len=0
-        self.lst_lst=[]
-        self.lst_egress_pair=set()
+        #self.lst_len=0
+        #self.lst_lst=[]
+        #self.lst_egress_pair=set()
         self.query=packets()
         self.query.register_callback(self.app)
         self.policy=self.query
     def mac_rem(self,pkt):
         print "rem new mac"
-        if (pkt['srcip'],pkt['switch'],pkt['inport']) not in self.lst_egress_pair:
+        print 'dst ip is {0}'.format(pkt['dstip'])
+        if (pkt['srcip'],pkt['switch'],pkt['inport']) not in self.lst_egress_pair and pkt['dstip'] == '10.0.0.8':
             self.lst_egress_pair.add((pkt['srcip'],pkt['switch'],pkt['inport']))
             print "add ("+str(pkt['srcip'])+","+str(pkt['switch'])+")"
     def app(self,pkt):
         print "handle new app"
+        if pkt['dstip'] is not '10.0.0.8':
+            print "skip this packet for it is not control packets"
+            return
         self.mac_rem(pkt)
         print pkt
         #if pkt['ethtype'] == 2054:
